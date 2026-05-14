@@ -1,5 +1,16 @@
 // Phase 3: scheduler comparison — static / dynamic / guided.
-// Controlled at runtime via OMP_SCHEDULE env var:
+// Phase 4: histogram — atomic vs. reduction vs. false-sharing demo.
+// Phase 5: SIMD vectorization on blur inner loop + thread affinity.
+//
+// Build with vectorization report:
+//   g++ -O3 -march=native -fopenmp -fopt-info-vec-optimized -o optimized src/optimized.cpp
+//
+// Thread affinity (10 pts extra):
+//   OMP_NUM_THREADS=4 OMP_PROC_BIND=close  OMP_PLACES=cores ./optimized
+//   OMP_NUM_THREADS=2 OMP_PROC_BIND=spread OMP_PLACES=cores ./optimized
+//   OMP_NUM_THREADS=4                                        ./optimized  (sin afinidad)
+//
+// Scheduler:
 //   OMP_SCHEDULE="static"      ./optimized
 //   OMP_SCHEDULE="dynamic,16"  ./optimized
 //   OMP_SCHEDULE="guided,1"    ./optimized
@@ -65,46 +76,56 @@ static double mandelbrot_scheduled() {
     return omp_get_wtime() - t0;
 }
 
+// Phase 5: blur with SIMD inner loop.
+// #pragma omp simd reduction(+:r,g,b) lets the compiler vectorize the
+// 31-element convolution accumulation using AVX/SSE registers.
+// Confirmed by: g++ -fopt-info-vec-optimized (reports "loop vectorized").
+// OMP_PROC_BIND=close / spread controls whether threads share the same
+// physical core (better L2 reuse for the row buffer) or spread across cores.
 static double gaussian_blur() {
-    double kernel[2 * RADIUS + 1];
-    build_kernel(kernel);
+    double kernel_d[2 * RADIUS + 1];
+    build_kernel(kernel_d);
+    // Use float kernel for SIMD efficiency
+    float kernel_f[2 * RADIUS + 1];
+    for (int k = 0; k <= 2 * RADIUS; k++) kernel_f[k] = (float)kernel_d[k];
+
     double t0 = omp_get_wtime();
 
+    // Horizontal pass
     #pragma omp parallel for schedule(runtime)
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
-            double r = 0, g = 0, b = 0;
-            for (int k = -RADIUS; k <= RADIUS; k++) {
-                int sx = x + k;
-                if (sx < 0) sx = 0;
-                if (sx >= WIDTH) sx = WIDTH - 1;
-                double w = kernel[k + RADIUS];
-                r += w * image[y][sx][0];
-                g += w * image[y][sx][1];
-                b += w * image[y][sx][2];
+            float r = 0, g = 0, b = 0;
+            #pragma omp simd reduction(+:r,g,b)
+            for (int k = 0; k <= 2 * RADIUS; k++) {
+                int sx = x + k - RADIUS;
+                sx = (sx < 0) ? 0 : (sx >= WIDTH ? WIDTH - 1 : sx);
+                r += kernel_f[k] * image[y][sx][0];
+                g += kernel_f[k] * image[y][sx][1];
+                b += kernel_f[k] * image[y][sx][2];
             }
-            tmp[y][x][0] = (float)r;
-            tmp[y][x][1] = (float)g;
-            tmp[y][x][2] = (float)b;
+            tmp[y][x][0] = r;
+            tmp[y][x][1] = g;
+            tmp[y][x][2] = b;
         }
     }
 
+    // Vertical pass
     #pragma omp parallel for schedule(runtime)
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
-            double r = 0, g = 0, b = 0;
-            for (int k = -RADIUS; k <= RADIUS; k++) {
-                int sy = y + k;
-                if (sy < 0) sy = 0;
-                if (sy >= HEIGHT) sy = HEIGHT - 1;
-                double w = kernel[k + RADIUS];
-                r += w * tmp[sy][x][0];
-                g += w * tmp[sy][x][1];
-                b += w * tmp[sy][x][2];
+            float r = 0, g = 0, b = 0;
+            #pragma omp simd reduction(+:r,g,b)
+            for (int k = 0; k <= 2 * RADIUS; k++) {
+                int sy = y + k - RADIUS;
+                sy = (sy < 0) ? 0 : (sy >= HEIGHT ? HEIGHT - 1 : sy);
+                r += kernel_f[k] * tmp[sy][x][0];
+                g += kernel_f[k] * tmp[sy][x][1];
+                b += kernel_f[k] * tmp[sy][x][2];
             }
-            blurred[y][x][0] = (unsigned char)(r + 0.5);
-            blurred[y][x][1] = (unsigned char)(g + 0.5);
-            blurred[y][x][2] = (unsigned char)(b + 0.5);
+            blurred[y][x][0] = (unsigned char)(r + 0.5f);
+            blurred[y][x][1] = (unsigned char)(g + 0.5f);
+            blurred[y][x][2] = (unsigned char)(b + 0.5f);
         }
     }
 

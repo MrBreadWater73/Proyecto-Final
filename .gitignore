@@ -1,0 +1,11 @@
+# Binaries
+sequential
+parallel_ai
+optimized
+
+# Generated images
+*.ppm
+
+# Build artifacts
+*.o
+*.out

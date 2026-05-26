@@ -19,7 +19,7 @@ if [[ ! -f "$OUT" ]]; then
     echo "threads,task,scheduler,chunk,time_s" > "$OUT"
 fi
 
-THREAD_COUNTS=(1 2 3 4 5 6 7 8)
+THREAD_COUNTS=(1 2 3 4 5 6 7 8 9 10 11 12)
 
 # scheduler:chunk pairs to test
 declare -a SCHEDULERS=(

@@ -6,15 +6,18 @@ Implementación y análisis de paralelización con OpenMP sobre dos cargas de tr
 
 ---
 
-## Hardware objetivo
+## Hardware objetivo (Entornos de Evaluación)
 
-| Parámetro | Valor |
-|-----------|-------|
-| CPU | Intel Core i3-6006U (Skylake) |
-| Núcleos físicos / lógicos | 2 / 4 (Hyper-Threading) |
-| Caché L1d / L2 / L3 | 32 KiB / 256 KiB / 3 MiB |
-| RAM | 15 GiB DDR4 |
-| Compilador | GCC 13.3.0 · OpenMP 4.5 |
+El proyecto fue analizado y comparado en dos generaciones distintas de procesadores Intel:
+
+| Parámetro | Entorno Original (i3) | Entorno Nuevo (i5) |
+|-----------|-----------------------|--------------------|
+| **CPU** | Intel Core i3-6006U (Skylake) | Intel Core i5-1334U (Raptor Lake) |
+| **Arquitectura de Cores** | Simétrica (2 cores idénticos) | **Híbrida Heterogénea** (2 P-cores + 8 E-cores) |
+| **Núcleos físicos / lógicos** | 2 / 4 (Hyper-Threading) | **10 / 12** (HT activo en P-cores: 2x2 + 8 = 12) |
+| **Caché L1 / L2 / L3** | 32 KiB / 256 KiB / 3 MiB | 352 KiB (L1d) / 6.5 MiB / 12 MiB |
+| **RAM** | 15 GiB DDR4 | 15 GiB DDR4 |
+| **Compilador / OpenMP** | GCC 13.3.0 · OpenMP 4.5 | GCC 13.3.0 · OpenMP 4.5 |
 
 ---
 
@@ -100,16 +103,24 @@ El script evalúa hilos de 1 a 8 con schedulers: `static`, `dynamic:1/4/16/64`, 
 
 ## Resultados principales
 
-- **Speedup máximo medido:** ~3.5× con 4 hilos y scheduler `guided:1` (Mandelbrot).
-- **Fracción serial estimada:** f_serial ≈ 0.07 → límite teórico Amdahl: ~14.3×.
-- **False sharing:** la versión `atomic` del histograma es 2-5× más lenta que `reduction` por contención en líneas de caché de 64 bytes.
-- **SIMD:** el compilador confirma vectorización AVX 256-bit en el bucle interno de convolución (31 ops escalares → ~4 iteraciones vectoriales).
-- **Degradación por overhead del SO:** a partir de 5 hilos el speedup decrece por time-slicing sobre 4 núcleos lógicos.
+El contraste de rendimiento entre ambas arquitecturas arroja conclusiones fundamentales sobre concurrencia y hardware moderno:
+
+### 1. Resultados en Intel Core i3-6006U (Skylake - 2 núcleos simétricos)
+- **Speedup máximo medido:** `~3.5×` con 4 hilos y scheduler `guided:1` (Mandelbrot).
+- **Fracción serial estimada:** $f_{serial} \approx 0.07 \rightarrow$ límite teórico Amdahl: `~14.3×`.
+- **False sharing:** la versión `atomic` del histograma es 2-5× más lenta que `reduction` por contención.
+- **Degradación:** a partir de 5 hilos, el rendimiento decrece debido al context-switching sobre 4 núcleos lógicos disponibles.
+
+### 2. Resultados en Intel Core i5-1334U (Raptor Lake - 10 núcleos híbridos / 12 hilos)
+- **Mandelbrot (CPU-bound irregular):** Speedup máximo de **`5.04×`** con 12 hilos utilizando el scheduler **`dynamic:1`**. En CPUs con núcleos asimétricos (P-cores + E-cores), los schedulers dinámicos son obligatorios para evitar la inanición de hilos en barreras.
+- **Gaussian Blur (Memory-bound regular):** Speedup máximo de **`2.86×`** con 8 hilos. La saturación del bus de memoria RAM impone una pared física (*memory wall*) insalvable a pesar de contar con 12 hilos.
+- **Histograma (Optimización de sincronización):** La versión `reduction` (arreglo local por hilo + merge crítico) tardó apenas **`0.0069 s`**, siendo **101.6 veces más rápida** que la versión `atomic` (`0.7014 s`), al evitar por completo la contención en el bus de caché L1/L2.
 
 ---
 
 ## Documentación
 
-- [`report.md`](report.md) — Reporte técnico completo con análisis, gráficas y conclusiones.
+- [`report_i5.md`](report_i5.md) — **[NUEVO]** Reporte técnico completo del hardware híbrido Intel i5 (12 hilos).
+- [`report.md`](report.md) — Reporte técnico original del hardware simétrico Intel i3 (4 hilos).
 - [`docs/Proyecto_final.pdf`](docs/Proyecto_final.pdf) — Enunciado oficial del proyecto.
 - [`docs/OpenMP.pdf`](docs/OpenMP.pdf) — Material de referencia de la cátedra (A. I. Paredes López).
